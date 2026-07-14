@@ -131,24 +131,6 @@ def get_arg_parser():
     )
     algorithm_args.add_argument("--batch_size", default=8, type=int,
                                help="inference batch size. Default: %(default)s")
-    algorithm_args.add_argument("--tta_steps", default=0, type=int,
-                               help="per-image unlabeled flow adaptation steps; 0 disables TTA. Default: %(default)s")
-    algorithm_args.add_argument("--tta_lr", default=5e-2, type=float,
-                               help="learning rate for direct Region-aware flow refinement. Default: %(default)s")
-    algorithm_args.add_argument("--tta_niter", default=32, type=int,
-                               help="differentiable flow iterations per TTA step. Default: %(default)s")
-    algorithm_args.add_argument("--tta_region_threshold", default=0.0, type=float,
-                               help="cellprob threshold used to form TTA candidate regions. Default: %(default)s")
-    algorithm_args.add_argument("--tta_min_region_size", default=50, type=int,
-                               help="minimum candidate-region area in pixels. Default: %(default)s")
-    algorithm_args.add_argument("--tta_max_points", default=256, type=int,
-                               help="maximum sampled pixels per candidate region. Default: %(default)s")
-    algorithm_args.add_argument("--tta_flow_weight", default=0.1, type=float,
-                               help="weight anchoring refined flow to its original prediction. Default: %(default)s")
-    algorithm_args.add_argument("--tta_smooth_weight", default=0.01, type=float,
-                               help="within-region flow smoothness weight. Default: %(default)s")
-    algorithm_args.add_argument("--tta_device", default="cpu", choices=("cpu", "cuda"),
-                               help="device used for Region-aware Flow-TTA; CPU avoids GPU-memory pressure. Default: %(default)s")
 
     # TODO: remove deprecated in future version
     algorithm_args.add_argument(
