@@ -66,7 +66,7 @@ def _flow_smoothness(flow, foreground):
 def refine_flow_regions(dP, cellprob, *, steps=8, lr=5e-2, niter=32,
                         region_threshold=0.0, min_region_size=50,
                         max_points=256, flow_weight=0.1,
-                        smooth_weight=0.01, device=None):
+                        smooth_weight=0.01, device="cpu"):
     """Refine a 2D ``[2, Y, X]`` flow field using region-aware TTA.
 
     The optimized objective is
@@ -89,7 +89,7 @@ def refine_flow_regions(dP, cellprob, *, steps=8, lr=5e-2, niter=32,
         tta_logger.info("skipping Region-aware Flow-TTA: no candidate cellprob regions")
         return np.asarray(dP, dtype=np.float32)
 
-    target_device = torch.device(device) if device is not None else torch.device("cpu")
+    target_device = torch.device(device)
     initial = torch.as_tensor(dP, dtype=torch.float32, device=target_device)
     flow = initial.detach().clone().requires_grad_(True)
     regions = [torch.as_tensor(points, dtype=torch.float32, device=target_device)
@@ -102,9 +102,12 @@ def refine_flow_regions(dP, cellprob, *, steps=8, lr=5e-2, niter=32,
     scale = float(max(initial.shape[-2:]) ** 2)
     for _ in range(steps):
         optimizer.zero_grad(set_to_none=True)
+        # One trajectory integration for all regions avoids retaining one
+        # grid-sample autograd graph per region (which can exhaust CUDA memory).
+        region_lengths = [len(points) for points in regions]
+        endpoints_all = _follow_flow(flow, torch.cat(regions), niter)
         compact_losses = []
-        for points in regions:
-            endpoints = _follow_flow(flow, points, niter)
+        for endpoints in torch.split(endpoints_all, region_lengths):
             compact_losses.append((endpoints - endpoints.mean(dim=0)).square().sum(dim=1).mean() / scale)
         compact = torch.stack(compact_losses).mean()
         anchor = (flow - initial).square().mean()

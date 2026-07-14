@@ -161,7 +161,8 @@ class CellposeModel():
              augment=False, tile_overlap=0.1, bsize=256, 
              compute_masks=True, progress=None, tta_steps=0, tta_lr=5e-2,
              tta_niter=32, tta_region_threshold=0.0, tta_min_region_size=50,
-             tta_max_points=256, tta_flow_weight=0.1, tta_smooth_weight=0.01):
+             tta_max_points=256, tta_flow_weight=0.1, tta_smooth_weight=0.01,
+             tta_device="cpu"):
         """ segment list of images x, or 4D array - Z x 3 x Y x X
 
         Args:
@@ -210,6 +211,7 @@ class CellposeModel():
             tta_max_points (int, optional): Maximum sampled pixels per candidate region. Defaults to 256.
             tta_flow_weight (float, optional): Weight anchoring refined flow to the network prediction. Defaults to 0.1.
             tta_smooth_weight (float, optional): Weight of within-region flow smoothness. Defaults to 0.01.
+            tta_device (str or torch.device, optional): Device for flow refinement. CPU is the memory-safe default; use ``"cuda"`` only if enough free GPU memory is available.
 
         Returns:
             A tuple containing (masks, flows, styles): 
@@ -268,7 +270,8 @@ class CellposeModel():
                     tta_min_region_size=tta_min_region_size,
                     tta_max_points=tta_max_points,
                     tta_flow_weight=tta_flow_weight,
-                    tta_smooth_weight=tta_smooth_weight)
+                    tta_smooth_weight=tta_smooth_weight,
+                    tta_device=tta_device)
                 masks.append(maski)
                 flows.append(flowi)
                 styles.append(stylei)
@@ -336,7 +339,7 @@ class CellposeModel():
                     niter=tta_niter, region_threshold=tta_region_threshold,
                     min_region_size=tta_min_region_size, max_points=tta_max_points,
                     flow_weight=tta_flow_weight, smooth_weight=tta_smooth_weight,
-                    device=self.device)
+                    device=tta_device)
                 for i in range(dP.shape[1])
             ], axis=1)
 

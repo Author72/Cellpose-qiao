@@ -246,7 +246,8 @@ def _evaluate_cellposemodel_cli(args, logger, imf, device, pretrained_model, nor
                 tta_min_region_size=args.tta_min_region_size,
                 tta_max_points=args.tta_max_points,
                 tta_flow_weight=args.tta_flow_weight,
-                tta_smooth_weight=args.tta_smooth_weight)
+                tta_smooth_weight=args.tta_smooth_weight,
+                tta_device=args.tta_device)
         masks, flows = out[:2]
 
         if args.exclude_on_edges:

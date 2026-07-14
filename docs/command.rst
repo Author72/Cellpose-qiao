@@ -44,4 +44,6 @@ Enable it conservatively with a small number of steps::
 cellprob components participate. ``--tta_max_points`` bounds the computation
 per region. ``--tta_flow_weight`` and ``--tta_smooth_weight`` prevent the
 compactness objective from excessively changing flow. It currently supports 2D
-inference only. Start with 4--8 steps and compare masks against the baseline.
+inference only. Flow TTA runs on CPU by default to keep GPU memory available
+for CPSAM; pass ``--tta_device cuda`` only when substantial free GPU memory is
+available. Start with 4--8 steps and compare masks against the baseline.

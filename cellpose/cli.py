@@ -147,6 +147,8 @@ def get_arg_parser():
                                help="weight anchoring refined flow to its original prediction. Default: %(default)s")
     algorithm_args.add_argument("--tta_smooth_weight", default=0.01, type=float,
                                help="within-region flow smoothness weight. Default: %(default)s")
+    algorithm_args.add_argument("--tta_device", default="cpu", choices=("cpu", "cuda"),
+                               help="device used for Region-aware Flow-TTA; CPU avoids GPU-memory pressure. Default: %(default)s")
 
     # TODO: remove deprecated in future version
     algorithm_args.add_argument(
