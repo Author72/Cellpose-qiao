@@ -241,8 +241,12 @@ def _evaluate_cellposemodel_cli(args, logger, imf, device, pretrained_model, nor
                 flow3D_smooth=args.flow3D_smooth,
                 tta_steps=args.tta_steps,
                 tta_lr=args.tta_lr,
-                tta_batch_size=args.tta_batch_size,
-                tta_confidence=args.tta_confidence)
+                tta_niter=args.tta_niter,
+                tta_region_threshold=args.tta_region_threshold,
+                tta_min_region_size=args.tta_min_region_size,
+                tta_max_points=args.tta_max_points,
+                tta_flow_weight=args.tta_flow_weight,
+                tta_smooth_weight=args.tta_smooth_weight)
         masks, flows = out[:2]
 
         if args.exclude_on_edges:

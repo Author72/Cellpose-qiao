@@ -159,8 +159,9 @@ class CellposeModel():
              flow3D_smooth=0, stitch_threshold=0.0, 
              min_size=15, max_size_fraction=0.4, niter=None, 
              augment=False, tile_overlap=0.1, bsize=256, 
-             compute_masks=True, progress=None, tta_steps=0, tta_lr=1e-4,
-             tta_batch_size=1, tta_confidence=0.5):
+             compute_masks=True, progress=None, tta_steps=0, tta_lr=5e-2,
+             tta_niter=32, tta_region_threshold=0.0, tta_min_region_size=50,
+             tta_max_points=256, tta_flow_weight=0.1, tta_smooth_weight=0.01):
         """ segment list of images x, or 4D array - Z x 3 x Y x X
 
         Args:
@@ -201,10 +202,14 @@ class CellposeModel():
             interp (bool, optional): interpolate during 2D dynamics (not available in 3D) . Defaults to True.
             compute_masks (bool, optional): Whether or not to compute dynamics and return masks. Returns empty array if False. Defaults to True.
             progress (QProgressBar, optional): pyqt progress bar. Defaults to None.
-            tta_steps (int, optional): Number of per-image, unlabeled flow adaptation steps. A value of 0 disables it. Defaults to 0.
-            tta_lr (float, optional): Learning rate for flow test-time adaptation. Defaults to 1e-4.
-            tta_batch_size (int, optional): Number of deterministic 256px crops used for adaptation. Defaults to 1.
-            tta_confidence (float, optional): Minimum cell probability used in the flow consistency loss. Defaults to 0.5.
+            tta_steps (int, optional): Region-aware flow refinement steps per image. A value of 0 disables it. Defaults to 0.
+            tta_lr (float, optional): Learning rate for direct flow refinement. Defaults to 5e-2.
+            tta_niter (int, optional): Differentiable flow-integration iterations per refinement step. Defaults to 32.
+            tta_region_threshold (float, optional): Cellprob threshold used to form candidate connected regions. Defaults to 0.0.
+            tta_min_region_size (int, optional): Minimum candidate-region size in pixels. Defaults to 50.
+            tta_max_points (int, optional): Maximum sampled pixels per candidate region. Defaults to 256.
+            tta_flow_weight (float, optional): Weight anchoring refined flow to the network prediction. Defaults to 0.1.
+            tta_smooth_weight (float, optional): Weight of within-region flow smoothness. Defaults to 0.01.
 
         Returns:
             A tuple containing (masks, flows, styles): 
@@ -258,8 +263,12 @@ class CellposeModel():
                     niter=niter,
                     tta_steps=tta_steps,
                     tta_lr=tta_lr,
-                    tta_batch_size=tta_batch_size,
-                    tta_confidence=tta_confidence)
+                    tta_niter=tta_niter,
+                    tta_region_threshold=tta_region_threshold,
+                    tta_min_region_size=tta_min_region_size,
+                    tta_max_points=tta_max_points,
+                    tta_flow_weight=tta_flow_weight,
+                    tta_smooth_weight=tta_smooth_weight)
                 masks.append(maski)
                 flows.append(flowi)
                 styles.append(stylei)
@@ -309,23 +318,27 @@ class CellposeModel():
 
         if tta_steps and do_3D:
             raise ValueError("flow test-time adaptation currently supports 2D inference only")
-        tta_state = tta.adapt_flow_head(
-            self.net, x, steps=tta_steps, lr=tta_lr, patch_size=bsize,
-            max_patches=tta_batch_size, confidence=tta_confidence) if tta_steps else None
-        try:
-            dP, cellprob, styles = self._run_net(
-                x,
-                resample=resample,
-                rescale=image_scaling,
-                augment=augment,
-                batch_size=batch_size,
-                tile_overlap=tile_overlap,
-                bsize=bsize,
-                do_3D=do_3D,
-                anisotropy=anisotropy)
-        finally:
-            # TTA is image-local: never carry adapted readout weights to the next image.
-            tta.restore_flow_head(self.net, tta_state)
+        dP, cellprob, styles = self._run_net(
+            x,
+            resample=resample,
+            rescale=image_scaling,
+            augment=augment,
+            batch_size=batch_size,
+            tile_overlap=tile_overlap,
+            bsize=bsize,
+            do_3D=do_3D,
+            anisotropy=anisotropy)
+        if tta_steps:
+            # dP is [2, N, Y, X] for 2D inference. Each plane is independent.
+            dP = np.stack([
+                tta.refine_flow_regions(
+                    dP[:, i], cellprob[i], steps=tta_steps, lr=tta_lr,
+                    niter=tta_niter, region_threshold=tta_region_threshold,
+                    min_region_size=tta_min_region_size, max_points=tta_max_points,
+                    flow_weight=tta_flow_weight, smooth_weight=tta_smooth_weight,
+                    device=self.device)
+                for i in range(dP.shape[1])
+            ], axis=1)
 
         if do_3D and flow3D_smooth:
             if isinstance(flow3D_smooth, (int, float)):
