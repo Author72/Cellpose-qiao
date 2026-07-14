@@ -238,7 +238,11 @@ def _evaluate_cellposemodel_cli(args, logger, imf, device, pretrained_model, nor
                 z_axis=z_axis,
                 anisotropy=args.anisotropy, 
                 niter=args.niter,
-                flow3D_smooth=args.flow3D_smooth)
+                flow3D_smooth=args.flow3D_smooth,
+                tta_steps=args.tta_steps,
+                tta_lr=args.tta_lr,
+                tta_batch_size=args.tta_batch_size,
+                tta_confidence=args.tta_confidence)
         masks, flows = out[:2]
 
         if args.exclude_on_edges:

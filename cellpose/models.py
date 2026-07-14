@@ -15,7 +15,7 @@ import logging
 
 models_logger = logging.getLogger(__name__)
 
-from . import transforms, dynamics, utils, plot
+from . import transforms, dynamics, utils, plot, tta
 from .vit_sam import Transformer
 from .core import assign_device, run_net, run_3D
 
@@ -159,7 +159,8 @@ class CellposeModel():
              flow3D_smooth=0, stitch_threshold=0.0, 
              min_size=15, max_size_fraction=0.4, niter=None, 
              augment=False, tile_overlap=0.1, bsize=256, 
-             compute_masks=True, progress=None):
+             compute_masks=True, progress=None, tta_steps=0, tta_lr=1e-4,
+             tta_batch_size=1, tta_confidence=0.5):
         """ segment list of images x, or 4D array - Z x 3 x Y x X
 
         Args:
@@ -200,6 +201,10 @@ class CellposeModel():
             interp (bool, optional): interpolate during 2D dynamics (not available in 3D) . Defaults to True.
             compute_masks (bool, optional): Whether or not to compute dynamics and return masks. Returns empty array if False. Defaults to True.
             progress (QProgressBar, optional): pyqt progress bar. Defaults to None.
+            tta_steps (int, optional): Number of per-image, unlabeled flow adaptation steps. A value of 0 disables it. Defaults to 0.
+            tta_lr (float, optional): Learning rate for flow test-time adaptation. Defaults to 1e-4.
+            tta_batch_size (int, optional): Number of deterministic 256px crops used for adaptation. Defaults to 1.
+            tta_confidence (float, optional): Minimum cell probability used in the flow consistency loss. Defaults to 0.5.
 
         Returns:
             A tuple containing (masks, flows, styles): 
@@ -250,7 +255,11 @@ class CellposeModel():
                     stitch_threshold=stitch_threshold, 
                     flow3D_smooth=flow3D_smooth,
                     progress=progress, 
-                    niter=niter)
+                    niter=niter,
+                    tta_steps=tta_steps,
+                    tta_lr=tta_lr,
+                    tta_batch_size=tta_batch_size,
+                    tta_confidence=tta_confidence)
                 masks.append(maski)
                 flows.append(flowi)
                 styles.append(stylei)
@@ -298,16 +307,25 @@ class CellposeModel():
         if do_normalization:
             x = transforms.normalize_img(x, **normalize_params)
 
-        dP, cellprob, styles = self._run_net(
-            x,
-            resample=resample,
-            rescale=image_scaling,
-            augment=augment, 
-            batch_size=batch_size, 
-            tile_overlap=tile_overlap, 
-            bsize=bsize,
-            do_3D=do_3D, 
-            anisotropy=anisotropy)
+        if tta_steps and do_3D:
+            raise ValueError("flow test-time adaptation currently supports 2D inference only")
+        tta_state = tta.adapt_flow_head(
+            self.net, x, steps=tta_steps, lr=tta_lr, patch_size=bsize,
+            max_patches=tta_batch_size, confidence=tta_confidence) if tta_steps else None
+        try:
+            dP, cellprob, styles = self._run_net(
+                x,
+                resample=resample,
+                rescale=image_scaling,
+                augment=augment,
+                batch_size=batch_size,
+                tile_overlap=tile_overlap,
+                bsize=bsize,
+                do_3D=do_3D,
+                anisotropy=anisotropy)
+        finally:
+            # TTA is image-local: never carry adapted readout weights to the next image.
+            tta.restore_flow_head(self.net, tta_state)
 
         if do_3D and flow3D_smooth:
             if isinstance(flow3D_smooth, (int, float)):

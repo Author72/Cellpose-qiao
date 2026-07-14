@@ -131,6 +131,14 @@ def get_arg_parser():
     )
     algorithm_args.add_argument("--batch_size", default=8, type=int,
                                help="inference batch size. Default: %(default)s")
+    algorithm_args.add_argument("--tta_steps", default=0, type=int,
+                               help="per-image unlabeled flow adaptation steps; 0 disables TTA. Default: %(default)s")
+    algorithm_args.add_argument("--tta_lr", default=1e-4, type=float,
+                               help="learning rate for flow test-time adaptation. Default: %(default)s")
+    algorithm_args.add_argument("--tta_batch_size", default=1, type=int,
+                               help="number of image crops used for flow TTA. Default: %(default)s")
+    algorithm_args.add_argument("--tta_confidence", default=0.5, type=float,
+                               help="minimum cell probability included in TTA loss. Default: %(default)s")
 
     # TODO: remove deprecated in future version
     algorithm_args.add_argument(
