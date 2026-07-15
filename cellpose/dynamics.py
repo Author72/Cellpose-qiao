@@ -397,6 +397,60 @@ def follow_flows(dP, inds, niter=200, device=torch.device("cpu")):
     return p
 
 
+def endpoint_histogram(dP, cellprob, niter=200, cellprob_threshold=0.0,
+                       rpad=20, device=torch.device("cpu"),
+                       return_endpoints=False):
+    """Compute the endpoint-density histogram used by Cellpose clustering.
+
+    The histogram is the discrete vote count of final pixel locations after
+    Cellpose dynamics. Its shape is ``cellprob.shape + 2 * rpad`` because the
+    clusterer pads endpoint coordinates before detecting local density peaks.
+    Original image coordinate ``(y, x)`` is located at histogram coordinate
+    ``(y + rpad, x + rpad)``.
+
+    Args:
+        dP: 2D flow field of shape ``[2, Y, X]``.
+        cellprob: Cell probability map of shape ``[Y, X]``.
+        niter: Number of flow-following iterations; use the same value passed
+            to segmentation to obtain matching data.
+        cellprob_threshold: Candidate-pixel threshold used by segmentation.
+        rpad: Endpoint histogram padding, 20 in Cellpose clustering.
+        device: Device for flow integration. CPU is the safe default.
+        return_endpoints: If True, also return final integer endpoints in YX
+            order and the corresponding original candidate-pixel indices.
+
+    Returns:
+        Endpoint-density histogram, or ``(histogram, endpoints, inds)`` when
+        ``return_endpoints`` is True.
+    """
+    if dP.ndim != 3 or dP.shape[0] != 2:
+        raise ValueError("endpoint_histogram expects a 2D flow field shaped [2, Y, X]")
+    if cellprob.shape != tuple(dP.shape[1:]):
+        raise ValueError("cellprob shape must match the flow spatial shape")
+
+    shape = tuple(cellprob.shape)
+    histogram = np.zeros(tuple(dim + 2 * rpad for dim in shape), dtype=np.uint32)
+    inds = np.nonzero(cellprob > cellprob_threshold)
+    if len(inds[0]) == 0:
+        if return_endpoints:
+            return histogram, np.empty((0, 2), dtype=np.int32), inds
+        return histogram
+
+    endpoints = follow_flows(dP * (cellprob > cellprob_threshold) / 5., inds,
+                              niter=niter, device=device)
+    if torch.is_tensor(endpoints):
+        endpoints = endpoints.detach().cpu().numpy()
+    endpoints = np.asarray(endpoints, dtype=np.int32).T  # [N, YX]
+    padded = endpoints + rpad
+    for axis, length in enumerate(histogram.shape):
+        padded[:, axis] = np.clip(padded[:, axis], 0, length - 1)
+    np.add.at(histogram, tuple(padded[:, axis] for axis in range(padded.shape[1])), 1)
+
+    if return_endpoints:
+        return histogram, endpoints, inds
+    return histogram
+
+
 def remove_bad_flow_masks(masks, flows, threshold=0.4, device=torch.device("cpu")):
     """Remove masks which have inconsistent flows.
 
