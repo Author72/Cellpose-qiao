@@ -18,6 +18,8 @@ models_logger = logging.getLogger(__name__)
 from . import transforms, dynamics, utils, plot
 from .vit_sam import Transformer
 from .core import assign_device, run_net, run_3D
+from .mmd_tta import (MMDSourceBank, MMDTTAAdapter, MMDTTAConfig,
+                      build_source_bank)
 
 _CPSAM_MODEL_URL = "https://huggingface.co/mouseland/cellpose-sam/resolve/main/cpsam"
 _MODEL_DIR_ENV = os.environ.get("CELLPOSE_LOCAL_MODELS_PATH")
@@ -142,6 +144,8 @@ class CellposeModel():
         self.pretrained_model = pretrained_model
         dtype = torch.bfloat16 if use_bfloat16 else torch.float32
         self.net = Transformer(dtype=dtype).to(self.device)
+        self.mmd_source_bank = None
+        self.last_mmd_tta_history = []
 
         if os.path.exists(self.pretrained_model):
             models_logger.info(f">>>> loading model {self.pretrained_model}")
@@ -159,7 +163,7 @@ class CellposeModel():
              flow3D_smooth=0, stitch_threshold=0.0, 
              min_size=15, max_size_fraction=0.4, niter=None, 
              augment=False, tile_overlap=0.1, bsize=256, 
-             compute_masks=True, progress=None):
+             compute_masks=True, progress=None, mmd_tta=None):
         """ segment list of images x, or 4D array - Z x 3 x Y x X
 
         Args:
@@ -200,6 +204,9 @@ class CellposeModel():
             interp (bool, optional): interpolate during 2D dynamics (not available in 3D) . Defaults to True.
             compute_masks (bool, optional): Whether or not to compute dynamics and return masks. Returns empty array if False. Defaults to True.
             progress (QProgressBar, optional): pyqt progress bar. Defaults to None.
+            mmd_tta (MMDTTAConfig or dict, optional): Enable episodic foreground-aware
+                MMD test-time adaptation using a source bank previously set with
+                :meth:`build_mmd_source_bank` or :meth:`load_mmd_source_bank`.
 
         Returns:
             A tuple containing (masks, flows, styles): 
@@ -250,7 +257,8 @@ class CellposeModel():
                     stitch_threshold=stitch_threshold, 
                     flow3D_smooth=flow3D_smooth,
                     progress=progress, 
-                    niter=niter)
+                    niter=niter,
+                    mmd_tta=mmd_tta)
                 masks.append(maski)
                 flows.append(flowi)
                 styles.append(stylei)
@@ -274,7 +282,9 @@ class CellposeModel():
 
 
         # normalize image
-        normalize_params = normalize_default
+        # Keep per-call normalization settings isolated, especially when a list
+        # is evaluated episodically.
+        normalize_params = normalize_default.copy()
         if isinstance(normalize, dict):
             normalize_params = {**normalize_params, **normalize}
         elif not isinstance(normalize, bool):
@@ -298,16 +308,46 @@ class CellposeModel():
         if do_normalization:
             x = transforms.normalize_img(x, **normalize_params)
 
-        dP, cellprob, styles = self._run_net(
-            x,
-            resample=resample,
-            rescale=image_scaling,
-            augment=augment, 
-            batch_size=batch_size, 
-            tile_overlap=tile_overlap, 
-            bsize=bsize,
-            do_3D=do_3D, 
-            anisotropy=anisotropy)
+        adapter = None
+        if mmd_tta is not None and mmd_tta is not False:
+            if do_3D:
+                raise ValueError("MMD-TTA currently supports 2D inference only")
+            if self.mmd_source_bank is None:
+                raise ValueError(
+                    "MMD-TTA requires a source bank; call build_mmd_source_bank() "
+                    "or load_mmd_source_bank() first")
+            if isinstance(mmd_tta, dict):
+                mmd_tta = MMDTTAConfig(**mmd_tta)
+            elif mmd_tta is True:
+                mmd_tta = MMDTTAConfig()
+            elif not isinstance(mmd_tta, MMDTTAConfig):
+                raise TypeError("mmd_tta must be bool, dict, or MMDTTAConfig")
+            adapter = MMDTTAAdapter(self.net, self.mmd_source_bank, mmd_tta)
+            try:
+                self.last_mmd_tta_history = adapter.adapt(
+                    x, bsize=bsize, tile_overlap=tile_overlap,
+                    batch_size=batch_size, rescale=image_scaling)
+            except Exception:
+                adapter.restore()
+                raise
+        else:
+            self.last_mmd_tta_history = []
+
+        try:
+            dP, cellprob, styles = self._run_net(
+                x,
+                resample=resample,
+                rescale=image_scaling,
+                augment=augment,
+                batch_size=batch_size,
+                tile_overlap=tile_overlap,
+                bsize=bsize,
+                do_3D=do_3D,
+                anisotropy=anisotropy)
+        finally:
+            # Episodic TTA: every image starts again from the source model.
+            if adapter is not None:
+                adapter.restore()
 
         if do_3D and flow3D_smooth:
             if isinstance(flow3D_smooth, (int, float)):
@@ -340,6 +380,51 @@ class CellposeModel():
         masks, dP, cellprob = masks.squeeze(), dP.squeeze(), cellprob.squeeze()
 
         return masks, [plot.dx_to_circ(dP), dP, cellprob], styles
+
+    def build_mmd_source_bank(self, images, masks, *, normalize=True,
+                              channel_axis=None, max_features=10000,
+                              batch_size=8, bsize=256, tile_overlap=0.1,
+                              random_seed=0):
+        """Build and retain a foreground feature bank from labelled source images.
+
+        Images are converted and normalized using the same preprocessing as
+        :meth:`eval`. Each mask must be a 2D label image whose nonzero pixels are
+        foreground. Source images may have different spatial sizes.
+        """
+        image_list = [images] if isinstance(images, np.ndarray) and images.ndim <= 3 \
+            else list(images)
+        mask_list = [masks] if isinstance(masks, np.ndarray) and masks.ndim == 2 \
+            else list(masks)
+        if len(image_list) != len(mask_list):
+            raise ValueError("images and masks must have the same length")
+
+        if isinstance(normalize, dict):
+            normalize_params = {**normalize_default, **normalize}
+        elif isinstance(normalize, bool):
+            normalize_params = {**normalize_default, "normalize": normalize}
+        else:
+            raise ValueError("normalize must be a bool or a dict")
+
+        prepared = []
+        for image in image_list:
+            converted = transforms.convert_image(
+                image, channel_axis=channel_axis, do_3D=False)
+            if converted.ndim != 3:
+                raise ValueError("MMD source-bank images must be individual 2D images")
+            if normalize_params["normalize"]:
+                converted = transforms.normalize_img(converted,
+                                                     **normalize_params)
+            prepared.append(converted)
+        self.mmd_source_bank = build_source_bank(
+            self.net, prepared, mask_list, bsize=bsize,
+            tile_overlap=tile_overlap, max_features=max_features,
+            batch_size=batch_size, random_seed=random_seed)
+        return self.mmd_source_bank
+
+    def load_mmd_source_bank(self, path):
+        """Load and retain a serialized :class:`MMDSourceBank`."""
+        self.mmd_source_bank = MMDSourceBank.load(path)
+        return self.mmd_source_bank
     
 
     def _run_net(self, x, 

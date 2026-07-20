@@ -53,7 +53,12 @@ class Transformer(nn.Module):
         if dtype != torch.float32:
             self.dtype = dtype
 
-    def forward(self, x):      
+    def forward_features(self, x):
+        """Return the encoder-neck feature map used by the Cellpose readout.
+
+        Keeping feature extraction as an explicit operation makes it possible to
+        attach feature-space objectives (for example MMD) without forward hooks.
+        """
         # same progression as SAM until readout
         x = self.encoder.patch_embed(x)
         
@@ -71,15 +76,30 @@ class Transformer(nn.Module):
             for blk in self.encoder.blocks:
                 x = blk(x)
 
-        x = self.encoder.neck(x.permute(0, 3, 1, 2))
+        x = x.permute(0, 3, 1, 2)
+        # TTA may promote only the small neck to float32 while the frozen SAM
+        # encoder remains in bfloat16. Match the neck dtype at that boundary.
+        neck_dtype = next(self.encoder.neck.parameters()).dtype
+        return self.encoder.neck(x.to(dtype=neck_dtype))
 
-        # readout is changed here
-        x1 = self.out(x)
-        x1 = F.conv_transpose2d(x1, self.W2, stride = self.ps, padding = 0)
-        
+    def forward_from_features(self, features):
+        """Apply the flow/cell-probability readout to a neck feature map."""
+        out_dtype = self.out.weight.dtype
+        x1 = self.out(features.to(dtype=out_dtype))
+        x1 = F.conv_transpose2d(x1, self.W2.to(dtype=x1.dtype), stride=self.ps,
+                                padding=0)
+        return x1
+
+    def forward_with_features(self, x):
+        """Return network predictions together with their neck features."""
+        features = self.forward_features(x)
+        return self.forward_from_features(features), features
+
+    def forward(self, x):
+        x1, features = self.forward_with_features(x)
+
         # maintain the second output of feature size 256 for backwards compatibility
-           
-        return x1, torch.zeros((x.shape[0], 256), device=x.device)
+        return x1, torch.zeros((features.shape[0], 256), device=features.device)
     
     def load_model(self, PATH, device, strict = False):
         state_dict = torch.load(PATH, map_location = device, weights_only=True)
@@ -207,4 +227,3 @@ class CPnetBioImageIO(Transformer):
 
 
     
-

@@ -7,6 +7,7 @@ from tqdm import tqdm
 from cellpose import utils, models, io, train
 from .version import version_str
 from cellpose.cli import get_arg_parser
+from cellpose.mmd_tta import MMDTTAConfig
 
 try:
     from cellpose.gui import gui3d, gui
@@ -199,6 +200,19 @@ def _evaluate_cellposemodel_cli(args, logger, imf, device, pretrained_model, nor
 
     # handle built-in model exceptions
     model = models.CellposeModel(device=device, pretrained_model=pretrained_model,)
+    mmd_tta = None
+    if args.mmd_source_bank is not None:
+        model.load_mmd_source_bank(args.mmd_source_bank)
+        mmd_tta = MMDTTAConfig(
+            steps=args.mmd_tta_steps,
+            learning_rate=args.mmd_tta_lr,
+            foreground_threshold=args.mmd_tta_threshold,
+            bandwidths=tuple(args.mmd_tta_bandwidths),
+            mmd_weight=args.mmd_tta_weight,
+            consistency_weight=args.mmd_tta_consistency_weight,
+            anchor_weight=args.mmd_tta_anchor_weight,
+        )
+        logger.info(">>>> enabled episodic foreground-aware MMD-TTA")
 
     tqdm_out = utils.TqdmToLogger(logger, level=logging.INFO)
 
@@ -238,7 +252,8 @@ def _evaluate_cellposemodel_cli(args, logger, imf, device, pretrained_model, nor
                 z_axis=z_axis,
                 anisotropy=args.anisotropy, 
                 niter=args.niter,
-                flow3D_smooth=args.flow3D_smooth)
+                flow3D_smooth=args.flow3D_smooth,
+                mmd_tta=mmd_tta)
         masks, flows = out[:2]
 
         if args.exclude_on_edges:

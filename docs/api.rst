@@ -68,11 +68,17 @@ Core functions
 .. automodule:: cellpose.core
    :members:
 
+
+MMD test-time adaptation
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: cellpose.mmd_tta
+   :members:
+
 All models functions
 ~~~~~~~~~~~~~~~~~~~~~
 
 .. automodule:: cellpose.models
    :members:
-
 
 

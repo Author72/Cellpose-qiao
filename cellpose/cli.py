@@ -131,6 +131,31 @@ def get_arg_parser():
     )
     algorithm_args.add_argument("--batch_size", default=8, type=int,
                                help="inference batch size. Default: %(default)s")
+    algorithm_args.add_argument(
+        "--mmd_source_bank", default=None, type=str,
+        help="path to a labelled-source feature bank; enables episodic MMD-TTA")
+    algorithm_args.add_argument(
+        "--mmd_tta_steps", default=3, type=int,
+        help="optimizer steps per target image for MMD-TTA. Default: %(default)s")
+    algorithm_args.add_argument(
+        "--mmd_tta_lr", default=1e-5, type=float,
+        help="learning rate for MMD-TTA encoder-neck updates. Default: %(default)s")
+    algorithm_args.add_argument(
+        "--mmd_tta_threshold", default=0.8, type=float,
+        help="fixed target foreground probability threshold. Default: %(default)s")
+    algorithm_args.add_argument(
+        "--mmd_tta_bandwidths", nargs="+", type=float,
+        default=[0.5, 1.0, 2.0, 4.0],
+        help="RBF bandwidths for multi-kernel MMD. Default: %(default)s")
+    algorithm_args.add_argument(
+        "--mmd_tta_weight", default=0.1, type=float,
+        help="MMD loss weight (kept weak to limit negative transfer). Default: %(default)s")
+    algorithm_args.add_argument(
+        "--mmd_tta_consistency_weight", default=0.1, type=float,
+        help="photometric prediction-consistency weight. Default: %(default)s")
+    algorithm_args.add_argument(
+        "--mmd_tta_anchor_weight", default=1e-4, type=float,
+        help="source-parameter anchor weight. Default: %(default)s")
 
     # TODO: remove deprecated in future version
     algorithm_args.add_argument(

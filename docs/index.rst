@@ -61,6 +61,7 @@ Cellpose: a generalist algorithm for cellular segmentation
    models
    restore
    train
+   mmd_tta
    benchmark
    distributed
    openvino
